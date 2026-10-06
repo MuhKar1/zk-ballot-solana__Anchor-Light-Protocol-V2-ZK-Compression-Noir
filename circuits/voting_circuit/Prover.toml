@@ -1,0 +1,14 @@
+ballot_commitment = ""
+bits = ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""]
+choice = ["", "", "", ""]
+election_id = ""
+max_candidates = ""
+merkle_root_pub = ""
+nullifier = ""
+pk_hash = ""
+pk_x = ""
+pk_y = ""
+position_id = ""
+r_seed = ""
+s = ""
+sibs = ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""]

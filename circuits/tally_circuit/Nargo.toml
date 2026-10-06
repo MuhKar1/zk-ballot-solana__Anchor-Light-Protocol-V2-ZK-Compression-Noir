@@ -1,0 +1,9 @@
+[package]
+name = "tally_circuit"
+type = "bin"
+authors = [""]
+compiler_version = "1.0.0"
+
+[dependencies]
+voting_lib = { path = "../voting_lib" }
+poseidon = { path = "../vendor/poseidon" }

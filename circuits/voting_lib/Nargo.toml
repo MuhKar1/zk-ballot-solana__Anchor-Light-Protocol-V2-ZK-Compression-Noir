@@ -1,0 +1,8 @@
+[package]
+name = "voting_lib"
+type = "lib"
+authors = [""]
+compiler_version = "1.0.0"
+
+[dependencies]
+poseidon = { path = "../vendor/poseidon" }

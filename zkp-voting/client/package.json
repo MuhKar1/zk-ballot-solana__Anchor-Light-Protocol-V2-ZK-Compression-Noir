@@ -1,0 +1,13 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node check.mjs",
+    "test:adversarial": "node adversarial.mjs",
+    "test": "npm run check && npm run test:adversarial",
+    "make-inputs": "node make_inputs.mjs"
+  },
+  "dependencies": {
+    "poseidon-lite": "latest"
+  }
+}
