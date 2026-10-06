@@ -155,6 +155,21 @@ pub fn decompress(x: Field, y: Field, parity: Field) -> EmbeddedCurvePoint {
     p
 }
 
+// Validates that (x, y) is on the Grumpkin curve (y^2 = x^3 - 17) and returns it as a point.
+// Used to reject an off-curve public key that would otherwise still hash to a valid pk_hash.
+pub fn pk_point(x: Field, y: Field) -> EmbeddedCurvePoint {
+    assert(y * y == x * x * x - 17);
+    EmbeddedCurvePoint { x, y }
+}
+
+// Binds the tally secret key to the election public key: PK must equal sk * G. Without this
+// a tally authority could decrypt with a mismatched key and the decrypted bits would be garbage.
+pub fn assert_key_pair(sk: Field, pk_x: Field, pk_y: Field) {
+    let pk = pk_point(pk_x, pk_y);
+    let g = fixed_base_scalar_mul(EmbeddedCurveScalar::from_field(sk));
+    assert((g.x == pk.x) & (g.y == pk.y));
+}
+
 // Decrypts an ElGamal ciphertext slot: C2 must equal sk*C1 (bit 0) or sk*C1 + G (bit 1).
 pub fn decrypt_bit(sk: Field, c1: EmbeddedCurvePoint, c2: EmbeddedCurvePoint) -> bool {
     let sk_c1 = multi_scalar_mul([c1], [EmbeddedCurveScalar::from_field(sk)]);

@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  noir:
+    name: Noir circuits
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install nargo
+        uses: noir-lang/noirup@v0.1.3
+        with:
+          toolchain: 1.0.0-beta.22
+      - name: Test circuits
+        working-directory: circuits
+        run: nargo test --workspace
+
+  rust:
+    name: Rust program
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Unit tests
+        working-directory: zkp-voting
+        run: cargo test --lib
+
+  client:
+    name: TS crypto helpers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install deps
+        working-directory: zkp-voting/client
+        run: npm install
+      - name: Vector + property tests
+        working-directory: zkp-voting/client
+        run: npm test

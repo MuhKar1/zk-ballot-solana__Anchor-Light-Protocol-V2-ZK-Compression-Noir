@@ -92,8 +92,8 @@ Keep this running while executing `npm run test:light` in another terminal.
 
 ```bash
 light test-validator \
-	--sbf-program 3JF3sEqM796hk5WFqA6EtmEwJQ9quALszsfJyvXNQKy3 ../circuits/target/voting_circuit.so \
-	--sbf-program AjGDxunAeXevv7AWyhK4jKDsunjbAoZDxzNqGdM2iZWw ../circuits/target/tally_circuit.so \
+	--sbf-program 9jjgdh8kXLqZEkAGYjXTXsXGQeGALJ6YYKn5Gz3KXgYj ../circuits/target/voting_circuit.so \
+	--sbf-program AuSPaahFzAViTokdyhc6fYNe1gELiHRksbExo2YNptav ../circuits/target/tally_circuit.so \
 	--sbf-program 4uiu9QzRVZYdLdxCmADj6cQwFCrNufDCgU7NtsvQJWYA target/deploy/zkp_voting.so
 npm run test:light
 npm run test:tally

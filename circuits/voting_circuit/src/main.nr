@@ -23,7 +23,7 @@
 
 use dep::voting_lib::{
     ballot_commitment_of, ballot_fields, DEPTH, K_MAX, leaf_of, merkle_root, nullifier_of,
-    pk_hash_of, validate_choices, encrypt_slot, slot_randomness,
+    pk_hash_of, pk_point, validate_choices, encrypt_slot, slot_randomness,
 };
 use std::embedded_curve_ops::EmbeddedCurvePoint;
 
@@ -59,7 +59,7 @@ fn main(
     // "The encryption key I use hashes to the value stored on-chain." Without this a voter
     // could encrypt under their own key and the trustees could never count the ballot.
     assert(pk_hash_of(pk_x, pk_y) == pk_hash);
-    let pk = EmbeddedCurvePoint { x: pk_x, y: pk_y };
+    let pk = pk_point(pk_x, pk_y); // also asserts (pk_x, pk_y) is on the Grumpkin curve
 
     // RULE 4 - A VALID CHOICE
     // "I selected exactly one candidate, and it is a real one (below max_candidates)."
@@ -204,6 +204,18 @@ fn fail_ballot_under_other_key() {
     let mut w = good([false, true, false, false], 4);
     let other = pk_for(TEST_SK + 1);
     w.commitment = ballot_commitment_of(ballot_fields(other, w.r_seed, w.choice));
+    run(w);
+}
+
+// An off-curve (pk_x, pk_y) must be rejected even when its hash is committed to on-chain.
+#[test(should_fail)]
+fn fail_off_curve_pk() {
+    let mut w = good([false, true, false, false], 4);
+    let off = EmbeddedCurvePoint { x: 5, y: 1 }; // y^2 != x^3 - 17
+    w.pk_x = 5;
+    w.pk_y = 1;
+    w.pk_hash = pk_hash_of(5, 1);
+    w.commitment = ballot_commitment_of(ballot_fields(off, w.r_seed, w.choice));
     run(w);
 }
 

@@ -59,8 +59,8 @@ const proof = readFileSync(resolve(artifactDirectory, "voting_circuit.proof"));
 const publicWitness = readFileSync(resolve(artifactDirectory, "voting_circuit.pw"));
 const tallyProof = readFileSync(resolve(artifactDirectory, "tally_circuit.proof"));
 const tallyFixture = JSON.parse(readFileSync(resolve(artifactDirectory, "tally_circuit.fixture.json"), "utf8")) as TallyFixture;
-const verifierId = new PublicKey("3JF3sEqM796hk5WFqA6EtmEwJQ9quALszsfJyvXNQKy3");
-const tallyVerifierId = new PublicKey("AjGDxunAeXevv7AWyhK4jKDsunjbAoZDxzNqGdM2iZWw");
+const verifierId = new PublicKey("9jjgdh8kXLqZEkAGYjXTXsXGQeGALJ6YYKn5Gz3KXgYj");
+const tallyVerifierId = new PublicKey("AuSPaahFzAViTokdyhc6fYNe1gELiHRksbExo2YNptav");
 const computeBudget = ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 });
 
 function fieldBytes(value: string): Buffer {

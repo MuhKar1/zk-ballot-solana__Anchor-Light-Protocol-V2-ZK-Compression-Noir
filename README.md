@@ -1,11 +1,12 @@
 # ZKP Voting System
 
-A trustless, zero-knowledge voting system on Solana. Ballots are **ElGamal-encrypted**
-and stored as **ZK-compressed accounts**, so a vote is private and cheap. A
-**Groth16 circuit** proves each ballot is cast by an eligible voter exactly once,
-and a second circuit proves that the published **tally is the correct decryption**
-of the ballots the chain actually recorded — so the election administrator cannot
-stuff, flip, or forge votes without being detected.
+A privacy-preserving, cryptographically verifiable voting system on Solana. Ballots
+are **ElGamal-encrypted** and stored as **ZK-compressed accounts**, so a vote is
+private and cheap. A **Groth16 circuit** proves each ballot is cast by an eligible
+voter exactly once, and a second circuit proves that the published **tally is the
+correct decryption** of the ballots the chain actually recorded. Once the voter root
+is frozen, a dishonest administrator cannot add voters or forge ballots or totals
+without detection.
 
 ---
 
@@ -18,7 +19,7 @@ stuff, flip, or forge votes without being detected.
 5. [The protocol in detail](#the-protocol-in-detail)
 6. [Layer 1 — the Solana program](#layer-1--the-solana-program)
 7. [Layer 2 — the circuits](#layer-2--the-circuits)
-8. [Tally correctness (the trustless part)](#tally-correctness-the-trustless-part)
+8. [Tally correctness](#tally-correctness)
 9. [Design decisions](#design-decisions)
 10. [Security model & threat analysis](#security-model--threat-analysis)
 11. [Prerequisites](#prerequisites)
@@ -66,9 +67,16 @@ circuit, a dishonest (or compromised) administrator cannot publish fake totals.
 | Tally correctness | The admin posts `totals` | Layer-1 transcript + `tally_circuit` re-derive the tally on-chain |
 | Verifier programs | Groth16 verifying keys are correct | Pinned program IDs; keys are compiled into the verifier `.so` |
 
-**What remains trusted:** the **unsafe trusted setup** used to generate proving
-keys (fine for local testing, not for production), and the **Light Protocol
-validators/prover** for ZK compression (standard infrastructure trust).
+### Trusted vs enforced
+
+| Property | Trusted (admin / operator) | Enforced (cryptography / chain) |
+|---|---|---|
+| Voter eligibility | Pre-freeze enrollment: the admin publishes the Merkle root | Post-freeze: every ballot needs a Merkle membership proof |
+| Ballot contents | — | The ciphertext must match the proven commitment |
+| One vote per voter | — | The nullifier is the compressed-account seed (no replay) |
+| Tally | `sk` is held by one tallier (who can decrypt individual ballots) | `totals` must decrypt the on-chain transcript via `tally_circuit` |
+| Verifier programs | Deployment of the `.so` (upgrade authority) | Program IDs are pinned; keys are baked into the `.so` |
+| Proving keys | Unsafe `sunspot setup` (local only) | — |
 
 ---
 
@@ -92,8 +100,8 @@ validators/prover** for ZK compression (standard infrastructure trust).
                 │ CPI (Light V2)                    │ invoke (Sunspot)
                 ▼                                   ▼
    Light Protocol V2                      Sunspot Groth16 verifiers
-   (one compressed BallotAccount        voting verifier  3JF3sEqM796hk5WFqA6EtmEwJQ9quALszsfJyvXNQKy3
-    per ballot, indexed off-chain)      tally  verifier  AjGDxunAeXevv7AWyhK4jKDsunjbAoZDxzNqGdM2iZWw
+   (one compressed BallotAccount        voting verifier  9jjgdh8kXLqZEkAGYjXTXsXGQeGALJ6YYKn5Gz3KXgYj
+    per ballot, indexed off-chain)      tally  verifier  AuSPaahFzAViTokdyhc6fYNe1gELiHRksbExo2YNptav
 
         Off-chain (Noir workspace, circuits/)
         voting_lib  →  voting_circuit, ballot_encoder, tally_circuit
@@ -146,7 +154,7 @@ ZKP-Voting-System/
         ├── zkp-voting.ts            # validator-backed smoke/integration
         ├── compressed-ballot.ts     # full Light V2 cast_vote flow + replay
         ├── instructions.ts          # 20-case on-chain instruction matrix
-        ├── tally.ts                 # trustless post_tally end-to-end
+        ├── tally.ts                 # post_tally end-to-end (circuit-verified)
         ├── sunspot.ts               # raw Groth16 verifier accept/reject
         ├── adversarial.ts           # PDA seed-boundary tests (no validator)
         └── README.md                # test-suite docs + runbook
@@ -228,7 +236,7 @@ When `cast_vote` accepts a ballot it folds
 hash that **binds the exact ordered set of accepted ballots**. `post_tally` is
 then only allowed to store `totals` when a `tally_circuit` proof shows those
 totals decrypt that transcript (see
-[Tally correctness](#tally-correctness-the-trustless-part)).
+[Tally correctness](#tally-correctness)).
 
 ## Layer 1 — the Solana program
 
@@ -314,14 +322,20 @@ Two verifiers are deployed and pinned:
 
 | Circuit | Verifier program ID |
 |---|---|
-| `voting_circuit.vk` | `3JF3sEqM796hk5WFqA6EtmEwJQ9quALszsfJyvXNQKy3` |
-| `tally_circuit.vk` | `AjGDxunAeXevv7AWyhK4jKDsunjbAoZDxzNqGdM2iZWw` |
+| `voting_circuit.vk` | `9jjgdh8kXLqZEkAGYjXTXsXGQeGALJ6YYKn5Gz3KXgYj` |
+| `tally_circuit.vk` | `AuSPaahFzAViTokdyhc6fYNe1gELiHRksbExo2YNptav` |
 
 Both must be preloaded into the test validator at these addresses (see the
 runbook), and the program checks them with an `executable` + pinned-address
 account constraint (`InvalidVerifier` otherwise).
 
-## Tally correctness (the trustless part)
+These IDs are **per-network**: they are `SUNSPOT_VERIFIER_ID` and
+`SUNSPOT_TALLY_VERIFIER_ID` in `lib.rs` (and mirrored in the test fixtures), so
+re-point them for devnet/mainnet. Deploy immutably with
+`solana program set-upgrade-authority <ID> --final` and verify with
+`scripts/check-verifier-immutability.sh`.
+
+## Tally correctness
 
 The original `post_tally` trusted the admin: it accepted any `totals[4]` plus a
 self-reported `transcript_hash`. Two changes make the tally verifiable:
@@ -333,6 +347,10 @@ self-reported `transcript_hash`. Two changes make the tally verifiable:
    public input and, for each ballot, **re-derives the commitment, decompresses
    each ciphertext point, decrypts it with `sk`, and asserts the vote is
    one-hot**, then sums the bits and asserts the sum equals the public `totals`.
+
+The transcript is not admin-supplied: `cast_vote` folds the commitment it computed
+from the stored ciphertext (`xs` + parity), so the tally proof can only succeed
+against the exact commitments the chain recorded.
 
 `post_tally` therefore stores `totals` only when the proof verifies against the
 **on-chain** transcript. An admin who fabricates totals has no valid proof; an
@@ -350,7 +368,7 @@ ElGamal is additively homomorphic, so in principle the chain could sum
 ciphertexts and decrypt `Σbits·G` once. That would scale better — but it needs
 **Grumpkin** point arithmetic on-chain, and Solana's `alt_bn128` precompiles are
 BN254-**G1**, not Grumpkin. So the per-ballot `tally_circuit` (whose verification
-cost is independent of constraint count) is the pragmatic trustless design today.
+cost is independent of constraint count) is the pragmatic verifiable design today.
 
 ---
 
@@ -418,7 +436,7 @@ cost is independent of constraint count) is the pragmatic trustless design today
 | `client/check.mjs` | TS ↔ Noir Poseidon/Merkle vector parity |
 | `tests/instructions.ts` | full on-chain success/rejection matrix for all 5 instructions |
 | `tests/compressed-ballot.ts` | real Light V2 cast, corrupted-proof rejection, nullifier replay rejection, transcript advance |
-| `tests/tally.ts` | end-to-end trustless `post_tally` (cast + circuit-verified totals) |
+| `tests/tally.ts` | end-to-end `post_tally` (cast + circuit-verified totals) |
 | `tests/sunspot.ts` | raw Groth16 verifier accepts valid proof, rejects mutated witness |
 | `tests/adversarial.ts` | PDA seed-boundary invariants |
 
@@ -464,11 +482,18 @@ and prints the verifier program id. The tally verifier id must match
 `SUNSPOT_TALLY_VERIFIER_ID` in `lib.rs`; the voting verifier matches
 `SUNSPOT_VERIFIER_ID`.
 
+> **Do not re-run `sunspot setup` (or `deploy`) unless you intend to change the
+> circuit.** `setup` performs a fresh, *non-deterministic* trusted setup, so the
+> resulting `.vk` (and the verifier `.so` built from it) will no longer match the
+> pinned IDs; you would then have to redeploy and re-pin both verifier IDs and
+> regenerate all proofs. To regenerate proofs for the *current* circuit, run only
+> `sunspot compile` + `sunspot prove` + the `prepare:*` scripts.
+
 ### 2. Build the app program
 
 ```bash
 cd zkp-voting
-cargo test --lib        # Rust unit tests (6)
+cargo test --lib        # Rust unit tests (15)
 anchor build            # regenerates target/idl + target/types + deploy .so
 ```
 
@@ -476,8 +501,8 @@ anchor build            # regenerates target/idl + target/types + deploy .so
 
 ```bash
 light test-validator \
-  --sbf-program 3JF3sEqM796hk5WFqA6EtmEwJQ9quALszsfJyvXNQKy3 ../circuits/target/voting_circuit.so \
-  --sbf-program AjGDxunAeXevv7AWyhK4jKDsunjbAoZDxzNqGdM2iZWw ../circuits/target/tally_circuit.so \
+  --sbf-program 9jjgdh8kXLqZEkAGYjXTXsXGQeGALJ6YYKn5Gz3KXgYj ../circuits/target/voting_circuit.so \
+  --sbf-program AuSPaahFzAViTokdyhc6fYNe1gELiHRksbExo2YNptav ../circuits/target/tally_circuit.so \
   --sbf-program 4uiu9QzRVZYdLdxCmADj6cQwFCrNufDCgU7NtsvQJWYA target/deploy/zkp_voting.so
 ```
 
@@ -485,7 +510,7 @@ Keep it running, then in another terminal:
 
 ```bash
 npm run test:light       # integration + compressed + instructions + pda
-npm run test:tally       # trustless post_tally (re-prepares + proves + runs)
+npm run test:tally       # post_tally end-to-end (re-prepares + proves + runs)
 ```
 
 ---
@@ -530,12 +555,13 @@ Environment variables used by the suites:
 | Constant | Value | Where |
 |---|---|---|
 | Program ID | `4uiu9QzRVZYdLdxCmADj6cQwFCrNufDCgU7NtsvQJWYA` | `lib.rs` / `Anchor.toml` |
-| Voting verifier | `3JF3sEqM796hk5WFqA6EtmEwJQ9quALszsfJyvXNQKy3` | `lib.rs` |
-| Tally verifier | `AjGDxunAeXevv7AWyhK4jKDsunjbAoZDxzNqGdM2iZWw` | `lib.rs` |
+| Voting verifier | `9jjgdh8kXLqZEkAGYjXTXsXGQeGALJ6YYKn5Gz3KXgYj` | `lib.rs` |
+| Tally verifier | `AuSPaahFzAViTokdyhc6fYNe1gELiHRksbExo2YNptav` | `lib.rs` |
 | `K_MAX` | 4 | `lib.rs`, `voting_lib` |
 | `DEPTH` | 24 (⇒ `2²⁴` voters) | `voting_lib` |
 | `XS_LEN` / `BALLOT_LEN` | 8 / 16 | `ballot.rs`, `voting_lib` |
 | `N_BALLOTS` | 8 | `tally_circuit` |
+| `TALLY_CAPACITY` | 8 | `lib.rs` |
 | `MAX_PROOF_LEN` / `MAX_TALLY_PROOF_LEN` | 512 / 512 | `lib.rs` |
 | Domain tags | 1…5 | `ballot.rs`, `voting_lib` |
 | Address tree (test) | `amt2kaJA14v3urZbZvnc5v2np8jqvc4Z8zDep5wbtzx` | `compressed-ballot.ts` |
@@ -571,7 +597,10 @@ this README are the contract the frontend must satisfy.
 ## Known limitations
 
 - **Trusted setup is unsafe** — regenerate via a real MPC for production.
-- **Fixed `N_BALLOTS = 8`** tally capacity; larger elections need a new circuit + setup.
+- **Ballot cap at 8 per position** (`TALLY_CAPACITY` in `lib.rs`, mirroring the
+  tally circuit's `N_BALLOTS = 8`). This is a temporary stopgap: `cast_vote`
+  rejects the 9th ballot with `TallyCapacityReached`; the batch-aggregation tally
+  pipeline (planned) removes the cap entirely.
 - **No receipt-freeness / coercion resistance / verifiable decryption shares** — `sk`
   is held by a single tallier.
 - **No voter-facing key management** — `s` derivation from a passkey is assumed, not implemented.

@@ -14,8 +14,8 @@ import BN from "bn.js";
 import { PublicKey, SystemProgram } from "@solana/web3.js";
 import type { ZkpVoting } from "../target/types/zkp_voting";
 
-const VERIFIER_ID = new PublicKey("3JF3sEqM796hk5WFqA6EtmEwJQ9quALszsfJyvXNQKy3");
-const TALLY_VERIFIER_ID = new PublicKey("AjGDxunAeXevv7AWyhK4jKDsunjbAoZDxzNqGdM2iZWw");
+const VERIFIER_ID = new PublicKey("9jjgdh8kXLqZEkAGYjXTXsXGQeGALJ6YYKn5Gz3KXgYj");
+const TALLY_VERIFIER_ID = new PublicKey("AuSPaahFzAViTokdyhc6fYNe1gELiHRksbExo2YNptav");
 
 const ONE = [...Buffer.from("0000000000000000000000000000000000000000000000000000000000000001", "hex")];
 const TWO = [...Buffer.from("0000000000000000000000000000000000000000000000000000000000000002", "hex")];

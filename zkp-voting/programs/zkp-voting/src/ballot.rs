@@ -190,3 +190,129 @@ pub fn tally_public_witness(
     }
     w
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Decodes a 64-char hex string into a 32-byte field element (no external crates).
+    fn field(hex: &str) -> [u8; 32] {
+        assert_eq!(hex.len(), 64, "field hex must be 64 chars");
+        let mut out = [0u8; 32];
+        for i in 0..32 {
+            out[i] = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).expect("hex");
+        }
+        out
+    }
+
+    // Poseidon(Bn254X5) must match the Noir/circomlib reference vector.
+    #[test]
+    fn poseidon_matches_circomlib_vector() {
+        let h = poseidon2(&u64_to_field(1), &u64_to_field(2)).unwrap();
+        assert_eq!(
+            h,
+            field("115cc0f5e7d690413df64c6b9662e9cf2a3617f2743245519e19607a4417189a")
+        );
+    }
+
+    // pk_hash must match the deterministic fixture (pk = 1*G, sk = 1).
+    #[test]
+    fn pk_hash_matches_noir_vector() {
+        let gy = field("0000000000000002cf135e7506a45d632d270d45f1181294833fc48d823f272c");
+        let h = pk_hash(&u64_to_field(1), &gy).unwrap();
+        assert_eq!(
+            h,
+            field("1b2231fbfcbdc8e78a98d738945989141683623400dafa121b10cd8e00b9b395")
+        );
+    }
+
+    // ballot_commitment must match the deterministic ballot fixture
+    // (pk = 1*G, r_seed = 55555, choice = [0,1,0,0], parity = 199).
+    #[test]
+    fn ballot_commitment_matches_noir_vector() {
+        let xs = [
+            field("10b75300c2fa898983b5dbc432f4dcb67ad1352c61464d83286eb07611bc2f4a"),
+            field("10b75300c2fa898983b5dbc432f4dcb67ad1352c61464d83286eb07611bc2f4a"),
+            field("1de875a73f5c453cebfef531032933621f90d81b8788db882042d983384669f9"),
+            field("1eeac3200ad7a653e10dc6ac33efbde32b1188c25013f22ff2f2a032e95b4b2f"),
+            field("25be218c110eb15d70f7165495d7c003ee3c6df9312423b0c26bd5289b55498c"),
+            field("25be218c110eb15d70f7165495d7c003ee3c6df9312423b0c26bd5289b55498c"),
+            field("0c25b8cecce4164af847a77d7b8c4dffcb074b934b813c8d071bb828f758d876"),
+            field("0c25b8cecce4164af847a77d7b8c4dffcb074b934b813c8d071bb828f758d876"),
+        ];
+        let commitment = ballot_commitment(&expand_ballot(&xs, 199)).unwrap();
+        assert_eq!(
+            commitment,
+            field("214c2146b7f84ae19622a3adf2e0c647bd41c241669013c8ae5305c087b23dc4")
+        );
+    }
+
+    // expand_ballot must interleave x at even indices and parity bits at odd indices' LSB.
+    #[test]
+    fn expand_ballot_places_x_and_parity() {
+        let mut xs = [[0u8; 32]; XS_LEN];
+        for (i, x) in xs.iter_mut().enumerate() {
+            x[31] = (i + 1) as u8;
+        }
+        let parity: u8 = 0b1010_0101;
+        let ct = expand_ballot(&xs, parity);
+        for slot in 0..K_MAX {
+            assert_eq!(ct[slot * 4], xs[slot * 2]);
+            assert_eq!(ct[slot * 4 + 2], xs[slot * 2 + 1]);
+            assert_eq!(ct[slot * 4 + 1][31], (parity >> (slot * 2)) & 1);
+            assert_eq!(ct[slot * 4 + 3][31], (parity >> (slot * 2 + 1)) & 1);
+            assert!(ct[slot * 4 + 1][..31].iter().all(|b| *b == 0));
+            assert!(ct[slot * 4 + 3][..31].iter().all(|b| *b == 0));
+        }
+    }
+
+    #[test]
+    fn ballot_commitment_rejects_non_canonical_field() {
+        let mut ct = [[0u8; 32]; BALLOT_LEN];
+        ct[0] = BN254_MODULUS_BE; // the modulus itself is non-canonical
+        assert!(ballot_commitment(&ct).is_err());
+    }
+
+    #[test]
+    fn ballot_commitment_rejects_bad_parity() {
+        let mut ct = [[0u8; 32]; BALLOT_LEN];
+        ct[1][31] = 2; // odd index (parity slot) must be 0 or 1
+        assert!(ballot_commitment(&ct).is_err());
+    }
+
+    #[test]
+    fn public_witness_header_and_order() {
+        let root = u64_to_field(111);
+        let nullifier = u64_to_field(222);
+        let key_hash = u64_to_field(444);
+        let commitment = u64_to_field(333);
+        let w = public_witness(&root, &nullifier, 7, 1, 4, &key_hash, &commitment);
+        assert!(w[0..4] == (N_PUBLIC as u32).to_be_bytes());
+        assert!(w[8..12] == (N_PUBLIC as u32).to_be_bytes());
+        assert_eq!(&w[12..44], &root[..]);
+        assert_eq!(&w[44..76], &nullifier[..]);
+        assert_eq!(&w[76..108], &u64_to_field(7)[..]);
+        assert_eq!(&w[108..140], &u64_to_field(1)[..]);
+        assert_eq!(&w[140..172], &u64_to_field(4)[..]);
+        assert_eq!(&w[172..204], &key_hash[..]);
+        assert_eq!(&w[204..236], &commitment[..]);
+    }
+
+    #[test]
+    fn tally_public_witness_header_and_order() {
+        let transcript = u64_to_field(999);
+        let key_hash = u64_to_field(888);
+        let totals = [1u64, 2, 3, 4];
+        let w = tally_public_witness(&transcript, 8, 4, &key_hash, &totals);
+        assert!(w[0..4] == (N_PUBLIC_TALLY as u32).to_be_bytes());
+        assert!(w[8..12] == (N_PUBLIC_TALLY as u32).to_be_bytes());
+        assert_eq!(&w[12..44], &transcript[..]);
+        assert_eq!(&w[44..76], &u64_to_field(8)[..]);
+        assert_eq!(&w[76..108], &u64_to_field(4)[..]);
+        assert_eq!(&w[108..140], &key_hash[..]);
+        assert_eq!(&w[140..172], &u64_to_field(1)[..]);
+        assert_eq!(&w[172..204], &u64_to_field(2)[..]);
+        assert_eq!(&w[204..236], &u64_to_field(3)[..]);
+        assert_eq!(&w[236..268], &u64_to_field(4)[..]);
+    }
+}

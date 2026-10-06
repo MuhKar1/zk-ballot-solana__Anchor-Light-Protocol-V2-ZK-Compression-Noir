@@ -46,7 +46,7 @@ const fixture = JSON.parse(
 const proof = readFileSync(resolve(artifactDirectory, "voting_circuit.proof"));
 const publicWitness = readFileSync(resolve(artifactDirectory, "voting_circuit.pw"));
 const verifierId = new PublicKey(
-  "3JF3sEqM796hk5WFqA6EtmEwJQ9quALszsfJyvXNQKy3"
+  "9jjgdh8kXLqZEkAGYjXTXsXGQeGALJ6YYKn5Gz3KXgYj"
 );
 const computeBudget = ComputeBudgetProgram.setComputeUnitLimit({
   units: 1_400_000,
@@ -115,6 +115,17 @@ describe("Light compressed ballot integration", () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
   const program = anchor.workspace.ZkpVoting as anchor.Program<ZkpVoting>;
+
+  const CLOCK = new PublicKey("SysvarC1ock11111111111111111111111111111111");
+
+  async function validatorNow(): Promise<number> {
+    const info = await provider.connection.getAccountInfo(CLOCK);
+    return Number(info!.data.readBigInt64LE(32));
+  }
+
+  async function waitUntilValidator(ts: number): Promise<void> {
+    while ((await validatorNow()) < ts) await wait(100);
+  }
 
   it("verifies, stores, and prevents replay of a compressed ballot", async () => {
     assert.equal(proof.length, 388, "run the Sunspot proof preparation command");
@@ -308,7 +319,7 @@ describe("Light compressed ballot integration", () => {
       );
     };
 
-    const now = Math.floor(Date.now() / 1000);
+    const now = await validatorNow();
     const voteStart = new BN(now + 10);
     const voteEnd = new BN(now + 3600);
     await sendLegacyTransaction(
@@ -359,9 +370,7 @@ describe("Light compressed ballot integration", () => {
         .instruction()
     );
 
-    while (Math.floor(Date.now() / 1000) < voteStart.toNumber()) {
-      await wait(100);
-    }
+    await waitUntilValidator(voteStart.toNumber());
     const invalidProof = Buffer.from(proof);
     invalidProof[0] ^= 1;
     await assert.rejects(

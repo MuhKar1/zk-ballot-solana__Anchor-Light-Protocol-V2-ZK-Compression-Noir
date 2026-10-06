@@ -35,9 +35,9 @@ declare_id!("4uiu9QzRVZYdLdxCmADj6cQwFCrNufDCgU7NtsvQJWYA");
 /// from this program id, so only this program can authorize the compressed-account writes.
 pub const LIGHT_CPI_SIGNER: CpiSigner = derive_light_cpi_signer!("4uiu9QzRVZYdLdxCmADj6cQwFCrNufDCgU7NtsvQJWYA");
 /// Pinned voting verifier program — compiled from `circuits/target/voting_circuit.vk`.
-pub const SUNSPOT_VERIFIER_ID: Pubkey = pubkey!("3JF3sEqM796hk5WFqA6EtmEwJQ9quALszsfJyvXNQKy3");
+pub const SUNSPOT_VERIFIER_ID: Pubkey = pubkey!("9jjgdh8kXLqZEkAGYjXTXsXGQeGALJ6YYKn5Gz3KXgYj");
 /// Pinned tally verifier program — compiled from `circuits/target/tally_circuit.vk`.
-pub const SUNSPOT_TALLY_VERIFIER_ID: Pubkey = pubkey!("AjGDxunAeXevv7AWyhK4jKDsunjbAoZDxzNqGdM2iZWw");
+pub const SUNSPOT_TALLY_VERIFIER_ID: Pubkey = pubkey!("AuSPaahFzAViTokdyhc6fYNe1gELiHRksbExo2YNptav");
 /// Max candidates per race (and encryption slots). Mirrors `K_MAX` in `voting_lib`.
 pub const K_MAX: usize = 4;
 /// Merkle tree capacity 2^24 — mirrors `DEPTH = 24` in `voting_lib`.
@@ -46,6 +46,9 @@ pub const MERKLE_CAPACITY: u64 = 1 << 24;
 pub const MAX_PROOF_LEN: usize = 512;
 /// Upper bound for the tally proof byte length.
 pub const MAX_TALLY_PROOF_LEN: usize = 512;
+/// Stopgap cap on ballots per position — mirrors the tally circuit's fixed `N_BALLOTS`.
+/// Removed once the batch-aggregation tally pipeline (no capacity cliff) lands.
+pub const TALLY_CAPACITY: u64 = 8;
 
 /// Rejects empty/oversized voter trees. `leaf_count` must be within the 2^24 capacity
 /// implied by the circuit's `DEPTH = 24` Merkle tree.
@@ -56,6 +59,13 @@ fn validate_leaf_count(leaf_count: u64) -> Result<()> {
         VotingError::InvalidLeafCount
     );
 
+    Ok(())
+}
+
+/// Temporary guard so a position never exceeds the tally circuit's fixed capacity. The 9th
+/// ballot (and beyond) is rejected here rather than producing a tally that can never be proven.
+fn ensure_ballot_capacity(ballot_count: u64) -> Result<()> {
+    require!(ballot_count < TALLY_CAPACITY, VotingError::TallyCapacityReached);
     Ok(())
 }
 
@@ -203,6 +213,7 @@ pub mod zkp_voting {
             !proof.is_empty() && proof.len() <= MAX_PROOF_LEN,
             VotingError::BadProofLength
         );
+        ensure_ballot_capacity(ctx.accounts.transcript.ballot_count)?;
 
         let commitment = ballot_commitment(&expand_ballot(&xs, parity_bits))?;
         let witness = public_witness(
@@ -553,6 +564,8 @@ pub enum VotingError {
     InvalidTally,
     #[msg("Tally proof length out of range.")]
     BadTallyProofLength,
+    #[msg("This position has reached its tally capacity.")]
+    TallyCapacityReached,
     #[msg("Poseidon syscall failed.")]
     PoseidonFailed,
 }
@@ -588,5 +601,13 @@ mod tests {
     fn rejects_tallies_above_leaf_count_or_u64_capacity() {
         assert!(validate_tally_totals(&[3, 2, 0, 0], 4, 4).is_err());
         assert!(validate_tally_totals(&[u64::MAX, 1, 0, 0], 4, u64::MAX).is_err());
+    }
+
+    #[test]
+    fn accepts_up_to_tally_capacity() {
+        for n in 0..TALLY_CAPACITY {
+            assert!(ensure_ballot_capacity(n).is_ok());
+        }
+        assert!(ensure_ballot_capacity(TALLY_CAPACITY).is_err());
     }
 }

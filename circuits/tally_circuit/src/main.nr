@@ -20,8 +20,8 @@
 //   4..7 totals        votes per candidate slot
 // =====================================================================================
 use dep::voting_lib::{
-    ballot_commitment_of, ballot_fields_from_xs, decompress, decrypt_bit, K_MAX, parity_bit,
-    pk_hash_of, transcript_fold, transcript_init, validate_choices, XS_LEN,
+    assert_key_pair, ballot_commitment_of, ballot_fields_from_xs, decompress, decrypt_bit,
+    K_MAX, parity_bit, pk_hash_of, transcript_fold, transcript_init, validate_choices, XS_LEN,
 };
 
 global N_BALLOTS: u32 = 8; // fixed circuit capacity; a larger election needs a larger setup
@@ -46,6 +46,7 @@ fn main(
     assert(max_candidates <= K_MAX);
     assert(ballot_count <= N_BALLOTS);
     assert(pk_hash_of(pk_x, pk_y) == pk_hash);
+    assert_key_pair(sk, pk_x, pk_y); // bind the tally secret key to the election public key
 
     let mut acc = transcript_init();
     let mut count: [Field; K_MAX] = [0; K_MAX];
@@ -223,6 +224,18 @@ fn fail_wrong_secret_key() {
     choices[0][0] = true;
     let mut w = good(choices, 1, 4);
     w.sk += 1;
+    run(w);
+}
+
+// An off-curve (pk_x, pk_y) must be rejected even when its hash matches the election key.
+#[test(should_fail)]
+fn fail_off_curve_pk() {
+    let mut choices = [[false; K_MAX]; N_BALLOTS];
+    choices[0][0] = true;
+    let mut w = good(choices, 1, 4);
+    w.pk_x = 5;
+    w.pk_y = 1; // (5, 1) is not on the Grumpkin curve
+    w.pk_hash = pk_hash_of(5, 1);
     run(w);
 }
 
