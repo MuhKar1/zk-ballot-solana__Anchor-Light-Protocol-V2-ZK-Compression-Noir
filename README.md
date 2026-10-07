@@ -26,10 +26,11 @@ without detection.
 12. [Build & test runbook](#build--test-runbook)
 13. [Developer workflow](#developer-workflow)
 14. [Configuration reference](#configuration-reference)
-15. [Frontend integration (planned)](#frontend-integration-planned)
-16. [Known limitations](#known-limitations)
-17. [Troubleshooting](#troubleshooting)
-18. [Disclaimer](#disclaimer)
+15. [Frontend (`app/`)](#frontend-app)
+16. [Frontend setup & user guide](#frontend-setup--user-guide)
+17. [Known limitations](#known-limitations)
+18. [Troubleshooting](#troubleshooting)
+19. [Disclaimer](#disclaimer)
 
 ---
 
@@ -53,8 +54,10 @@ published in encrypted form. The election secret key (`sk`) stays **off-chain**
 with the tally authority, but because the tally is re-derived by a verified
 circuit, a dishonest (or compromised) administrator cannot publish fake totals.
 
-> **Status:** the protocol and test suite are complete and green. A frontend is
-> planned but not yet present — see [Frontend integration](#frontend-integration-planned).
+> **Status:** the protocol, the Anchor/Light test suite, and the Next.js frontend
+> are complete. Everything runs end-to-end: the admin console creates elections and
+> freezes the voter list, voters cast encrypted ballots through a relayer, and the
+> admin posts a circuit-verified tally that anyone can inspect.
 
 ## Trust model at a glance
 
@@ -83,10 +86,11 @@ circuit, a dishonest (or compromised) administrator cannot publish fake totals.
 ## Architecture
 
 ```
-                 Voter (browser/CLI, future frontend)
-      passkey → secret s → leaf, nullifier, ElGamal ballot
+                 Voter (browser — Next.js `app/`)
+      id+password → secret s → leaf, nullifier, ElGamal ballot
       proves voting_circuit (Noir → Groth16, via Sunspot)
                               │  proof + ciphertext (xs + parity) + nullifier
+                              │  (relayer signs + pays; voter pubkey stays off-chain)
                               ▼
 ┌────────────────────────────────────────────────────────────────────────────┐
 │                    Solana program: zkp_voting  (Layer 1)                    │
@@ -137,7 +141,7 @@ ZKP-Voting-System/
 │   ├── target/                      # build artifacts (gitignored, regenerated)
 │   └── vendor/poseidon/             # vendored Noir Poseidon (circomlib-compatible)
 │
-└── zkp-voting/                      # Anchor project (Layer 1 + tests)
+├── zkp-voting/                      # Anchor project (Layer 1 + tests)
     ├── Anchor.toml
     ├── Cargo.toml / Cargo.lock
     ├── package.json                 # npm scripts
@@ -158,6 +162,23 @@ ZKP-Voting-System/
         ├── sunspot.ts               # raw Groth16 verifier accept/reject
         ├── adversarial.ts           # PDA seed-boundary tests (no validator)
         └── README.md                # test-suite docs + runbook
+│
+└── app/                              # Next.js frontend (App Router)
+    ├── public/idl/zkp_voting.json    # Anchor IDL (keep in sync with zkp-voting/)
+    ├── public/proving/               # staged circuit artifacts for the WASM prover
+    ├── src/app/
+    │   ├── admin/page.tsx            # admin console (create → positions → voters → tally)
+    │   ├── vote/page.tsx             # voter booth (manifest → identify → choose → cast)
+    │   ├── results/page.tsx          # transcript + tally viewer
+    │   └── api/                      # /api/prove (dev prover) + /api/cast-vote (relayer)
+    ├── src/lib/
+    │   ├── crypto/                   # TS mirror of voting_lib + tree.mjs
+    │   ├── solana/                   # connection, program, PDAs, admin, castVote, relayer, events
+    │   ├── light/                    # Light V2 helpers
+    │   ├── proving/                  # Prover interface (NodeProver + WasmProver)
+    │   └── manifest.ts               # election manifest schema + parser
+    ├── src/components/               # wallet providers, topbar, stepper
+    └── prisms/prover/                # gnark → WASM prover source (Go)
 ```
 
 ---
@@ -388,6 +409,13 @@ cost is independent of constraint count) is the pragmatic verifiable design toda
 | Separate tally verifier program | Each Groth16 verifying key is compiled into its own program, so two circuits = two pinned IDs |
 | `N_BALLOTS = 8` fixed capacity | Verification cost is independent of constraints, so a modest fixed capacity keeps setup/proving practical |
 | Unsafe `sunspot setup` | Documented as local-only; production needs a real trusted setup (MPC) |
+| Relayer signs + pays `cast_vote` | The voter's public key never appears on-chain — only the encrypted ballot + nullifier. The relayer key is server-only, never `NEXT_PUBLIC_*` |
+| Election manifest (JSON) | One shareable artifact (root, `pk`, aspirants, leaves); the voter re-checks `root` against the on-chain frozen root, so an untrusted manifest can't smuggle in voters |
+| One `Prover` interface, two backends | `NodeProver` → `/api/prove` (fastest demo); `WasmProver` → gnark-in-a-worker (secret stays on-device). Selected by `NEXT_PUBLIC_PROVER` |
+| Server-side tally proving | The admin already holds `sk`, so in-browser tally proving adds cost with no privacy gain |
+| Password-derived `s` (demo) | `s = Poseidon(SHA256(id), SHA256(password))`; the admin supplies the password so can re-derive any secret — acceptable for the demo, not production (use self-enrollment/passkeys) |
+| Chain clock, not wall clock | The Light validator's `Clock` drifts ahead; the app reads `getBlockTime` for window checks |
+| Scan program history for events | `getSignaturesForAddress` omits LUT-loaded accounts on some RPCs; the program itself is always a static account key, so `events.ts` scans it and filters by position |
 
 ---
 
@@ -568,29 +596,132 @@ Environment variables used by the suites:
 
 ---
 
-## Frontend integration (planned)
+## Frontend (`app/`)
 
-A frontend is the next phase and is not yet present. The integration surface it
-will consume is already defined:
+A Next.js 14 (App Router) TypeScript app that drives the whole system end to end.
+Three routes:
 
-- **Vote flow** — per ballot the client must:
-  1. derive `s` from the user's passkey,
-  2. fetch the frozen root / `pk` / window from the program,
-  3. build the Merkle path (registration service),
-  4. run `voting_circuit` + `sunspot prove` to get `proof`,
-  5. call `cast_vote(proof, nullifier, xs, parity_bits, validity_proof, …)` via
-     a Light-aware transaction (see `tests/compressed-ballot.ts` for the exact
-     account + LUT layout, including the `1_400_000` compute budget).
-- **Tally flow** — an admin client fetches the `BallotCast` events / compressed
-  ballots for a position, decrypts with `sk`, builds the `tally_circuit`
-  witness (see `client/make_tally_inputs.mjs`), proves, and calls
-  `post_tally(totals, proof)` (also with a `1_400_000` compute budget).
-- **Indexer** — read compressed ballots from the Light indexer
-  (`LIGHT_INDEXER_URL`), keyed by owner `programId` and the nullifier-derived
-  address.
+- **`/admin`** — create an election, add positions, enroll + freeze voters, post the tally.
+- **`/vote`** — load the election manifest, identify, choose, review, cast.
+- **`/results`** — inspect the live transcript and the on-chain verified tally.
 
-The on-chain ABI, PDA seeds, witness layouts, and compute-budget requirements in
-this README are the contract the frontend must satisfy.
+### Why the frontend is built this way
+
+| Decision | Why |
+|---|---|
+| **Relayer signs + pays `cast_vote`** | The voter's public key never appears on-chain — only the encrypted ballot + nullifier. The relayer wallet (`RELAYER_SECRET_KEY`) is server-only, never `NEXT_PUBLIC_*` |
+| **Election manifest (JSON)** | One shareable artifact (root, `pk`, aspirants, leaves). The voter re-checks `root` against the on-chain frozen root, so an untrusted manifest can't smuggle in voters |
+| **One `Prover` interface, two backends** | `NodeProver` → `/api/prove` (fastest demo); `WasmProver` → gnark-in-a-worker (secret stays on-device). Selected by `NEXT_PUBLIC_PROVER` |
+| **Tally proving stays server-side** | The admin already holds `sk`, so in-browser tally proving adds cost with no privacy gain |
+| **Password-derived `s` (demo)** | `s = Poseidon(SHA256(id), SHA256(password))`. The admin supplies the password, so the admin can re-derive any secret — acceptable for the demo, not production (use self-enrollment/passkeys) |
+| **Chain clock, not wall clock** | The Light validator's `Clock` drifts ahead; the app reads `getBlockTime` for window checks |
+| **Scan program history for events** | `getSignaturesForAddress` omits LUT-loaded accounts on some RPCs; the program itself is always a static account key, so `events.ts` scans it and filters by position |
+
+### Proving backends
+
+- **`NodeProver` (default)** — `POST /api/prove` runs `nargo execute` + `sunspot prove`
+  on the server. Fastest path to a working demo, but the witness (voter secret)
+  leaves the browser. Needs `nargo` + `sunspot` on `PATH` and `SUNSPOT_CIRCUITS_DIR`.
+- **`WasmProver`** — the gnark prover compiled to WASM (`prisms/prover/`), run in a
+  Web Worker. The `Prover` interface is shared; only the vote witness goes on-device.
+  The "Problem B" half (browser `nargo execute` witness via `noir_js`) is still
+  pending, so `proveVote` is not wired end-to-end yet.
+
+### The relayer
+
+`/api/cast-vote` takes only the **public** ballot payload (Groth16 proof, nullifier,
+`xs`, parity) and the election/position/transcript addresses, then signs and pays a
+versioned transaction with the relayer wallet. The full Light V2 recipe (address
+tree, validity proof, LUT, `1_400_000` compute budget) lives in
+`lib/solana/castVote.ts`, ported from `zkp-voting/tests/compressed-ballot.ts`.
+
+### Admin flow (`/admin`)
+
+1. **Connect** — Phantom or a pasted base58 secret key (the key becomes the election authority).
+2. **Election** — name + "starts in" delay + duration; generates a fresh tally key
+   (`generateTallyKey`) and calls `initialize_election`.
+3. **Positions** — one or more races, each with 1–4 aspirants; calls `initialize_position`.
+4. **Voters** — one `name,id,password` per line; derives each leaf, builds the Merkle
+   tree, then `freeze_voter_root` (must happen before voting starts).
+5. **Status & tally** — lists this authority's elections; per position, "Auto tally"
+   gathers `BallotCast` events in cast order (`fetchBallotCasts`), decrypts with `sk`,
+   builds the `tally_circuit` witness (`buildTallyWitness`), proves, and `post_tally`s.
+
+### Voter flow (`/vote`)
+
+1. **Load & connect** — paste the manifest; the app re-checks `root` against the
+   on-chain frozen root and confirms the list is locked.
+2. **Identify** — id + password → `deriveSecret` → leaf → Merkle path (all in-browser).
+3. **Choose** — one aspirant per position.
+4. **Review** — for each position the browser builds the witness, generates the
+   Groth16 proof, and submits the public payload to the relayer.
+5. **Done** — success banner with the transaction signature and nullifier.
+
+### Results flow (`/results`)
+
+Paste the manifest → the app reads `BallotTranscript` (ballot count) and
+`TallyResult` (published totals) per position and renders them side by side.
+## Frontend setup & user guide
+
+### Prerequisites
+
+- Node ≥ 20 (use 22), npm.
+- For the default dev prover: `nargo` (`1.0.0-beta.22`) + `sunspot` on `PATH`, and
+  the circuit artifacts built (`circuits/target/*.ccs`, `*.pk`, `*.json`, `*.gz`).
+- A running validator with the app + both verifiers preloaded (see the runbook).
+
+### Local setup
+
+```bash
+# 1. From the runbook: start the Light validator (app + voting/tally verifiers).
+
+# 2. Configure the app
+cd app
+cp .env.local.example .env.local
+# edit .env.local:
+#   SUNSPOT_CIRCUITS_DIR=/absolute/path/to/ZKP-Voting-System/circuits
+#   RELAYER_SECRET_KEY=[ ...64 ed25519 numbers... ]
+
+# 3. Fund the relayer (the address derived from RELAYER_SECRET_KEY)
+solana airdrop 2 <relayer-pubkey>   # or fund it on devnet / via Phantom
+
+# 4. Install, verify crypto parity, run
+npm install
+npm run check          # 11/11 crypto fixtures must pass
+npm run dev            # http://localhost:3000
+```
+
+### Devnet deployment
+
+```bash
+# Point the app at devnet + the Light devnet services, and your deployed IDs:
+#   NEXT_PUBLIC_RPC_URL, NEXT_PUBLIC_LIGHT_INDEXER_URL, NEXT_PUBLIC_LIGHT_PROVER_URL
+#   NEXT_PUBLIC_PROGRAM_ID, NEXT_PUBLIC_VOTING_VERIFIER_ID, NEXT_PUBLIC_TALLY_VERIFIER_ID
+
+cd app
+npm run build
+npm run start          # or deploy to Vercel with the same env vars
+```
+
+Deploy the program with `anchor deploy` and the verifiers with `sunspot deploy`
+(immutably — `set-upgrade-authority --final`), then re-pin the IDs in both `lib.rs`
+and `.env.local`. The dev prover still needs `nargo`/`sunspot` reachable from the
+server; for a fully on-device voter, build and select the WASM prover.
+
+### User guide
+
+**Admin.** Open `/admin`, connect a wallet, and walk the five-step wizard. Keep the
+tally key in the page (it is in-memory only — do not refresh between creating the
+election and posting the tally). Copy the manifest at the "Status" step and share it
+with voters. After voting ends, "Auto tally" each position and share the results link.
+
+**Voter.** Open `/vote`, connect any wallet (it is *not* used on-chain — the relayer
+pays), paste the manifest, enter the id + password the admin gave you, choose one
+aspirant per position, review, and cast. You'll see a success banner with your
+transaction signature; your choices are encrypted and only the tally reveals totals.
+
+**Observer.** Open `/results`, paste the manifest, and read the frozen-root
+fingerprint, per-position ballot count, and (once posted) the verified tally.
 
 ---
 
@@ -603,7 +734,12 @@ this README are the contract the frontend must satisfy.
   pipeline (planned) removes the cap entirely.
 - **No receipt-freeness / coercion resistance / verifiable decryption shares** — `sk`
   is held by a single tallier.
-- **No voter-facing key management** — `s` derivation from a passkey is assumed, not implemented.
+- **Password-derived voter secret** — the demo derives `s` from an admin-supplied
+  id + password, so the admin (or anyone who learns the password) can re-derive a
+  voter's secret. Production needs self-enrollment (share only the leaf) or a passkey.
+- **Dev-only proving path** — the default `NodeProver` sends the witness to
+  `/api/prove` (server-side `nargo` + `sunspot`); the on-device WASM prover still
+  needs its browser witness-generation half before it is fully private.
 - **Local/dev verifier programs** are compiled from the current `.vk`; redeploy
   regenerates the program id, which must then be re-pinned in `lib.rs`.
 - **Light Protocol V2** specifics (address tree id, CPI account layout) are pinned

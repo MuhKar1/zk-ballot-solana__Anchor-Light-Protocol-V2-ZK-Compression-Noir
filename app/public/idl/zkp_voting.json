@@ -1,0 +1,1063 @@
+{
+  "address": "4uiu9QzRVZYdLdxCmADj6cQwFCrNufDCgU7NtsvQJWYA",
+  "metadata": {
+    "name": "zkp_voting",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Created with Anchor"
+  },
+  "instructions": [
+    {
+      "name": "cast_vote",
+      "docs": [
+        "The vote entrypoint. It (1) checks the frozen/window state, (2) rebuilds the",
+        "`voting_circuit` public witness from on-chain state and verifies the Groth16 proof",
+        "via the pinned Sunspot verifier, (3) creates a Light V2 compressed `BallotAccount`",
+        "whose address is seeded by the nullifier (so replay is structurally impossible), and",
+        "(4) folds the ballot into the `BallotTranscript`. See `tests/compressed-ballot.ts`",
+        "for the exact Light account/lookup-table layout and the `1_400_000` compute budget."
+      ],
+      "discriminator": [
+        20,
+        212,
+        15,
+        189,
+        69,
+        180,
+        69,
+        151
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "election",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  108,
+                  101,
+                  99,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "election.authority",
+                "account": "ElectionConfig"
+              },
+              {
+                "kind": "account",
+                "path": "election.election_id",
+                "account": "ElectionConfig"
+              }
+            ]
+          }
+        },
+        {
+          "name": "position",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  115,
+                  105,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "election"
+              },
+              {
+                "kind": "account",
+                "path": "position.position_id",
+                "account": "PositionConfig"
+              }
+            ]
+          }
+        },
+        {
+          "name": "transcript",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  97,
+                  110,
+                  115,
+                  99,
+                  114,
+                  105,
+                  112,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "position"
+              }
+            ]
+          }
+        },
+        {
+          "name": "verifier",
+          "address": "9jjgdh8kXLqZEkAGYjXTXsXGQeGALJ6YYKn5Gz3KXgYj"
+        }
+      ],
+      "args": [
+        {
+          "name": "proof",
+          "type": "bytes"
+        },
+        {
+          "name": "nullifier",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "xs",
+          "type": {
+            "array": [
+              {
+                "array": [
+                  "u8",
+                  32
+                ]
+              },
+              8
+            ]
+          }
+        },
+        {
+          "name": "parity_bits",
+          "type": "u8"
+        },
+        {
+          "name": "validity_proof",
+          "type": {
+            "defined": {
+              "name": "ValidityProof"
+            }
+          }
+        },
+        {
+          "name": "address_tree_info",
+          "type": {
+            "defined": {
+              "name": "PackedAddressTreeInfo"
+            }
+          }
+        },
+        {
+          "name": "output_state_tree_index",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "freeze_voter_root",
+      "docs": [
+        "Publishes the Merkle root of registered voters and freezes it before voting opens.",
+        "This root becomes public input #0 of `voting_circuit`, so eligibility is fixed",
+        "before any ballot is cast (no adding voters mid-election)."
+      ],
+      "discriminator": [
+        246,
+        96,
+        15,
+        216,
+        17,
+        178,
+        221,
+        202
+      ],
+      "accounts": [
+        {
+          "name": "election",
+          "writable": true
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "election"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "root",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "leaf_count",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "initialize_election",
+      "docs": [
+        "Creates an election and stores its ElGamal public key (as `pk_hash = H(pk_x, pk_y)`)",
+        "plus the voting window. No circuit is involved yet — this only sets the key the",
+        "voter's `voting_circuit` proof must later commit to via `pk_hash`."
+      ],
+      "discriminator": [
+        59,
+        166,
+        191,
+        126,
+        195,
+        0,
+        153,
+        168
+      ],
+      "accounts": [
+        {
+          "name": "election",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  108,
+                  101,
+                  99,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "arg",
+                "path": "election_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "election_id",
+          "type": "u64"
+        },
+        {
+          "name": "pk_x",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "pk_y",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "vote_start_ts",
+          "type": "i64"
+        },
+        {
+          "name": "vote_end_ts",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "initialize_position",
+      "docs": [
+        "Creates a race under an election and initializes its `BallotTranscript` PDA to the",
+        "`TAG_TRANSCRIPT` domain separator. `max_candidates` must be in `1..=K_MAX`; this",
+        "bound is mirrored by the circuit's `validate_choices`."
+      ],
+      "discriminator": [
+        219,
+        192,
+        234,
+        71,
+        190,
+        191,
+        102,
+        80
+      ],
+      "accounts": [
+        {
+          "name": "election"
+        },
+        {
+          "name": "position",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  115,
+                  105,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "election"
+              },
+              {
+                "kind": "arg",
+                "path": "position_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "transcript",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  97,
+                  110,
+                  115,
+                  99,
+                  114,
+                  105,
+                  112,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "position"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "election"
+          ]
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "position_id",
+          "type": "u64"
+        },
+        {
+          "name": "max_candidates",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "post_tally",
+      "docs": [
+        "Publishes the final totals **only if** a `tally_circuit` proof shows they are the",
+        "decryption of the ballots the chain folded into `BallotTranscript`. It rebuilds the",
+        "tally witness from the on-chain transcript (not from admin-supplied data), enforces",
+        "`Σtotals ≤ ballot_count`, and verifies the proof via the pinned tally verifier."
+      ],
+      "discriminator": [
+        243,
+        151,
+        44,
+        117,
+        165,
+        217,
+        126,
+        38
+      ],
+      "accounts": [
+        {
+          "name": "election"
+        },
+        {
+          "name": "position"
+        },
+        {
+          "name": "transcript",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  97,
+                  110,
+                  115,
+                  99,
+                  114,
+                  105,
+                  112,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "position"
+              }
+            ]
+          }
+        },
+        {
+          "name": "tally",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  97,
+                  108,
+                  108,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "position"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "election"
+          ]
+        },
+        {
+          "name": "verifier",
+          "address": "AuSPaahFzAViTokdyhc6fYNe1gELiHRksbExo2YNptav"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "totals",
+          "type": {
+            "array": [
+              "u64",
+              4
+            ]
+          }
+        },
+        {
+          "name": "proof",
+          "type": "bytes"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "BallotTranscript",
+      "discriminator": [
+        18,
+        98,
+        84,
+        186,
+        246,
+        6,
+        251,
+        21
+      ]
+    },
+    {
+      "name": "ElectionConfig",
+      "discriminator": [
+        31,
+        60,
+        24,
+        171,
+        31,
+        205,
+        153,
+        64
+      ]
+    },
+    {
+      "name": "PositionConfig",
+      "discriminator": [
+        149,
+        147,
+        33,
+        105,
+        69,
+        54,
+        132,
+        25
+      ]
+    },
+    {
+      "name": "TallyResult",
+      "discriminator": [
+        189,
+        79,
+        74,
+        135,
+        150,
+        4,
+        4,
+        15
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "BallotAccount",
+      "discriminator": [
+        42,
+        227,
+        143,
+        132,
+        90,
+        52,
+        13,
+        199
+      ]
+    },
+    {
+      "name": "BallotCast",
+      "discriminator": [
+        194,
+        0,
+        41,
+        178,
+        6,
+        3,
+        169,
+        32
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "Unauthorized",
+      "msg": "Unauthorized administrative action."
+    },
+    {
+      "code": 6001,
+      "name": "AlreadyFrozen",
+      "msg": "Election root already frozen."
+    },
+    {
+      "code": 6002,
+      "name": "NotFrozen",
+      "msg": "Election root has not been frozen."
+    },
+    {
+      "code": 6003,
+      "name": "VotingClosed",
+      "msg": "Voting window is not open."
+    },
+    {
+      "code": 6004,
+      "name": "VotingStillOpen",
+      "msg": "Voting window has not ended."
+    },
+    {
+      "code": 6005,
+      "name": "BadWindow",
+      "msg": "Invalid voting window."
+    },
+    {
+      "code": 6006,
+      "name": "InvalidLeafCount",
+      "msg": "Leaf count must be between 1 and the Merkle tree capacity."
+    },
+    {
+      "code": 6007,
+      "name": "FreezeWindowClosed",
+      "msg": "The voter root cannot be frozen after voting starts."
+    },
+    {
+      "code": 6008,
+      "name": "PositionMismatch",
+      "msg": "Position does not belong to this election."
+    },
+    {
+      "code": 6009,
+      "name": "CandidateOutOfBounds",
+      "msg": "Candidate count out of bounds."
+    },
+    {
+      "code": 6010,
+      "name": "NonCanonicalField",
+      "msg": "Value is not a canonical BN254 field element."
+    },
+    {
+      "code": 6011,
+      "name": "BadParity",
+      "msg": "A y-parity slot is not 0 or 1."
+    },
+    {
+      "code": 6012,
+      "name": "BadProofLength",
+      "msg": "Proof length out of range."
+    },
+    {
+      "code": 6013,
+      "name": "InvalidVerifier",
+      "msg": "Verifier program is not the pinned verifier."
+    },
+    {
+      "code": 6014,
+      "name": "InvalidAddressTree",
+      "msg": "Address tree is not canonical."
+    },
+    {
+      "code": 6015,
+      "name": "NotEnoughAccountKeys",
+      "msg": "Not enough account keys for the Light CPI."
+    },
+    {
+      "code": 6016,
+      "name": "InvalidTally",
+      "msg": "Tally totals are invalid for this election."
+    },
+    {
+      "code": 6017,
+      "name": "BadTallyProofLength",
+      "msg": "Tally proof length out of range."
+    },
+    {
+      "code": 6018,
+      "name": "TallyCapacityReached",
+      "msg": "This position has reached its tally capacity."
+    },
+    {
+      "code": 6019,
+      "name": "PoseidonFailed",
+      "msg": "Poseidon syscall failed."
+    }
+  ],
+  "types": [
+    {
+      "name": "BallotAccount",
+      "docs": [
+        "The data payload written into each Light V2 compressed account. `xs` + `parity_bits` are",
+        "the compressed ciphertext (same layout as `voting_lib::ballot_fields`), and `commitment`",
+        "is the Poseidon commitment the vote proof binds to."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "position",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "commitment",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "xs",
+            "type": {
+              "array": [
+                {
+                  "array": [
+                    "u8",
+                    32
+                  ]
+                },
+                8
+              ]
+            }
+          },
+          {
+            "name": "parity_bits",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "BallotCast",
+      "docs": [
+        "Emitted on every accepted vote. The tally authority collects these (or the indexed",
+        "compressed accounts) to build the `tally_circuit` witness."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "election",
+            "type": "pubkey"
+          },
+          {
+            "name": "position",
+            "type": "pubkey"
+          },
+          {
+            "name": "nullifier",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "xs",
+            "type": {
+              "array": [
+                {
+                  "array": [
+                    "u8",
+                    32
+                  ]
+                },
+                8
+              ]
+            }
+          },
+          {
+            "name": "parity_bits",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "BallotTranscript",
+      "docs": [
+        "The running tally transcript. `cast_vote` folds `H(acc, H(nullifier, commitment))` after",
+        "every accepted ballot; `tally_circuit` re-derives this chain and must land on `transcript`",
+        "with exactly `ballot_count` real ballots. This is the Layer-1 anchor for tally correctness."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "position",
+            "type": "pubkey"
+          },
+          {
+            "name": "transcript",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "ballot_count",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CompressedProof",
+      "repr": {
+        "kind": "c"
+      },
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "a",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "b",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            "name": "c",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "ElectionConfig",
+      "docs": [
+        "Election state — the ElGamal public key (stored as `pk_hash`), the voting window, and",
+        "the frozen voter root. `frozen_root` becomes public input #0 of `voting_circuit`."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "election_id",
+            "type": "u64"
+          },
+          {
+            "name": "is_frozen",
+            "type": "bool"
+          },
+          {
+            "name": "frozen_root",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "leaf_count",
+            "type": "u64"
+          },
+          {
+            "name": "pk_x",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "pk_y",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "pk_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "vote_start_ts",
+            "type": "i64"
+          },
+          {
+            "name": "vote_end_ts",
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PackedAddressTreeInfo",
+      "docs": [
+        "Packed address tree info for instruction data.",
+        "Contains indices to address tree accounts and root index."
+      ],
+      "repr": {
+        "kind": "c"
+      },
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "address_merkle_tree_pubkey_index",
+            "type": "u8"
+          },
+          {
+            "name": "address_queue_pubkey_index",
+            "type": "u8"
+          },
+          {
+            "name": "root_index",
+            "type": "u16"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PositionConfig",
+      "docs": [
+        "A race within an election. `max_candidates` bounds the one-hot choice the circuit's",
+        "`validate_choices` checks, and drives the tally witness layout."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "election",
+            "type": "pubkey"
+          },
+          {
+            "name": "position_id",
+            "type": "u64"
+          },
+          {
+            "name": "max_candidates",
+            "type": "u8"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TallyResult",
+      "docs": [
+        "Published results. `totals` are only written after `post_tally` verifies a `tally_circuit`",
+        "proof, and `transcript_hash` records exactly which transcript they were proven against."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "position",
+            "type": "pubkey"
+          },
+          {
+            "name": "totals",
+            "type": {
+              "array": [
+                "u64",
+                4
+              ]
+            }
+          },
+          {
+            "name": "transcript_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ValidityProof",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "option": {
+              "defined": {
+                "name": "CompressedProof"
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

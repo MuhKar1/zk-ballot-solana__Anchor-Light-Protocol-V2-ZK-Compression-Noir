@@ -1,0 +1,35 @@
+{
+  "name": "zkp-voting-app",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "check": "tsx scripts/crypto-check.ts",
+    "witness:check": "node scripts/witness-check.mjs",
+    "prove:check": "node scripts/prove-wasm-check.mjs"
+  },
+  "dependencies": {
+    "@coral-xyz/anchor": "^0.31.1",
+    "@lightprotocol/stateless.js": "0.23.3",
+    "@noir-lang/noir_js": "1.0.0-beta.22",
+    "@solana/web3.js": "^1.95.0",
+    "bn.js": "^5.2.1",
+    "buffer": "^6.0.3",
+    "next": "14.2.15",
+    "poseidon-lite": "^0.3.0",
+    "process": "^0.11.10",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/bn.js": "^5.1.6",
+    "@types/node": "^20.14.0",
+    "@types/react": "^18.3.5",
+    "@types/react-dom": "^18.3.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.2"
+  }
+}
